@@ -21,21 +21,39 @@ except ImportError:
     print("ERROR: pycryptodome required. Install with: pip install pycryptodome")
     sys.exit(1)
 
-# --- Dump format constants (must match ps5_key_extract.c) ---
+# --- Dump format constants (must match ps5_key_extract.c v2) ---
 DUMP_MAGIC       = 0x505550444D50  # "PUPDMP\0\0" as uint64 LE
 SECTION_LSB      = 0x01
 SECTION_IOCTL    = 0x02
 SECTION_SNAP_PRE = 0x03
 SECTION_SNAP_POST = 0x04
 SECTION_MEMSCAN  = 0x05
+SECTION_CDEVSW   = 0x06
+SECTION_CCP_REGS = 0x07
+SECTION_ADDR_READ = 0x08
+SECTION_HANDLER_OPEN  = 0x09
+SECTION_HANDLER_CLOSE = 0x0A
 
 SECTION_NAMES = {
     SECTION_LSB: "CCP LSB Key Slots",
-    SECTION_IOCTL: "ioctl Handler Code",
+    SECTION_IOCTL: "d_ioctl Handler Code",
     SECTION_SNAP_PRE: "Pre-Decrypt LSB Snapshot",
     SECTION_SNAP_POST: "Post-Decrypt LSB Snapshot",
     SECTION_MEMSCAN: "Kernel Memory Scan",
+    SECTION_CDEVSW: "cdevsw Struct",
+    SECTION_CCP_REGS: "CCP Queue Registers",
+    SECTION_ADDR_READ: "Targeted Address Read",
+    SECTION_HANDLER_OPEN: "d_open Handler Code",
+    SECTION_HANDLER_CLOSE: "d_close Handler Code",
 }
+
+# CCP queue register names (11 regs x 4 bytes each, per queue)
+CCP_QUEUE_REG_NAMES = [
+    "CONTROL", "TAIL_LO", "HEAD_LO", "INT_ENABLE", "INT_STATUS",
+    "STATUS", "PUBLIC_MASK_LO", "PUBLIC_MASK_HI",
+    "PRIVATE_MASK_LO", "PRIVATE_MASK_HI", "STATUS2",
+]
+CCP_NUM_QUEUES = 5
 
 # LSB geometry
 LSB_COUNT = 8
@@ -72,7 +90,7 @@ def parse_dump(data: bytes) -> dict:
 
     header_size = 16  # dump_header_t
     section_hdr_size = 16  # section_header_t
-    max_sections = 32
+    max_sections = 64
     section_table_offset = header_size
 
     sections = []
@@ -105,7 +123,7 @@ def extract_key_candidates(sections: list) -> list:
     seen = set()
 
     for sec in sections:
-        if sec["type"] not in (SECTION_LSB, SECTION_SNAP_PRE, SECTION_SNAP_POST):
+        if sec["type"] not in (SECTION_LSB, SECTION_SNAP_PRE, SECTION_SNAP_POST, SECTION_ADDR_READ):
             continue
 
         data = sec["data"]
@@ -289,6 +307,64 @@ def hexdump_section(data: bytes, label: str, max_bytes: int = 256):
         print(f"  ... ({len(data) - show} more bytes)")
 
 
+def display_cdevsw(data: bytes):
+    """Display the pup_update0 cdevsw struct with labeled function pointers."""
+    print(f"\n--- cdevsw Struct (pup_update0) ---")
+    if len(data) < 0x58:
+        print(f"  [!] Too small ({len(data)} bytes)")
+        return
+    fields = [
+        (0x00, "d_version"),
+        (0x04, "d_flags"),
+        (0x08, "d_name (ptr)"),
+        (0x10, "d_open"),
+        (0x18, "d_close"),
+        (0x20, "d_read"),
+        (0x28, "d_write"),
+        (0x30, "d_ioctl"),
+        (0x38, "d_poll"),
+        (0x40, "d_mmap"),
+        (0x48, "d_strategy"),
+        (0x58, "d_kqfilter"),
+    ]
+    for off, name in fields:
+        if off + 8 <= len(data):
+            val = struct.unpack_from("<Q", data, off)[0]
+            print(f"  +0x{off:02x} {name:16s} = 0x{val:016x}")
+
+
+def display_ccp_regs(data: bytes):
+    """Display CCP queue registers."""
+    print(f"\n--- CCP Queue Registers ---")
+    regs_per_queue = len(CCP_QUEUE_REG_NAMES)
+    bytes_per_queue = regs_per_queue * 4
+    num_queues = min(CCP_NUM_QUEUES, len(data) // bytes_per_queue)
+
+    for q in range(num_queues):
+        base = q * bytes_per_queue
+        print(f"  Queue {q}:")
+        for r in range(regs_per_queue):
+            val = struct.unpack_from("<I", data, base + r * 4)[0]
+            name = CCP_QUEUE_REG_NAMES[r]
+            print(f"    {name:20s} = 0x{val:08x}")
+
+        pub_lo = struct.unpack_from("<I", data, base + 6 * 4)[0]
+        pub_hi = struct.unpack_from("<I", data, base + 7 * 4)[0]
+        pub_mask = (pub_hi << 32) | pub_lo
+        priv_lo = struct.unpack_from("<I", data, base + 8 * 4)[0]
+        priv_hi = struct.unpack_from("<I", data, base + 9 * 4)[0]
+        priv_mask = (priv_hi << 32) | priv_lo
+
+        readable = pub_mask & ~priv_mask
+        print(f"    CPU-readable slots mask: 0x{readable:016x}")
+        if readable == 0:
+            print(f"    [!] No CPU-readable slots on this queue")
+        else:
+            for bit in range(64):
+                if readable & (1 << bit):
+                    print(f"    [+] Slot {bit} is CPU-readable")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Analyze PS5 PUP key dump")
     parser.add_argument("dumpfile", help="Path to pup_key_dump.bin")
@@ -310,12 +386,24 @@ def main():
     if parsed is None:
         sys.exit(1)
 
-    # Display ioctl handler sections
+    # Display handler and metadata sections
     for sec in parsed["sections"]:
         if sec["type"] == SECTION_IOCTL:
-            hexdump_section(sec["data"], "ioctl Handler Code (DecryptPupHeader)")
+            hexdump_section(sec["data"], "d_ioctl Handler Code (DecryptPupHeader)")
+            print(f"  Save this {len(sec['data'])}-byte blob and load into Ghidra/IDA as x86-64")
+        elif sec["type"] == SECTION_HANDLER_OPEN:
+            hexdump_section(sec["data"], "d_open Handler Code")
+            print(f"  Key loading may happen here — disassemble alongside d_ioctl")
+        elif sec["type"] == SECTION_HANDLER_CLOSE:
+            hexdump_section(sec["data"], "d_close Handler Code")
+        elif sec["type"] == SECTION_CDEVSW:
+            display_cdevsw(sec["data"])
+        elif sec["type"] == SECTION_CCP_REGS:
+            display_ccp_regs(sec["data"])
+        elif sec["type"] == SECTION_ADDR_READ:
+            hexdump_section(sec["data"], "Targeted Address Read")
         elif sec["type"] == SECTION_MEMSCAN:
-            hexdump_section(sec["data"], f"Kernel Memory Scan Match")
+            hexdump_section(sec["data"], "Kernel Memory Scan Match")
 
     # Check for LSB diff (approach 3)
     changed_slots = find_lsb_diff(parsed["sections"])

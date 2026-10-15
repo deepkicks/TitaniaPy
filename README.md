@@ -69,18 +69,31 @@ python main.py decompress segment.bin -o decompressed.bin
 |------|-------------|
 | `RESEARCH_POST.md` | Full technical write-up of findings |
 
-## Key Extraction Payload
+## Key Extraction Payload (v2)
 
-If you have a jailbroken PS5 on FW 13.60 or below, `ps5_key_extract.c` implements four extraction approaches:
+If you have a jailbroken PS5 on FW 13.60 or below, `ps5_key_extract.c` implements a **chained extraction strategy**:
 
-1. **CCP LSB Key Slot Dump** — Reads all 128 hardware key slots via MMIO
-2. **EncryptService ioctl Handler Scan** — Finds and dumps the `pup_update0` decrypt handler code
-3. **Instrumented PUP Decrypt** — Snapshots key slots before/after a decrypt call to catch the key being loaded
-4. **Kernel Memory Scan** — Searches near crypto-related strings for key material
+**The chain: Approach 2 → Approach 1/5**
+1. Dump the `pup_update0` ioctl/open/close handler code (only needs kernel R/W)
+2. Disassemble on PC to find where the key comes from
+3. Re-run the payload with `-a <address>` to read that specific location
 
-All read-only. Output goes to `/data/pup_key_dump.bin`. Transfer to PC and run:
+**All five approaches:**
+1. **CCP LSB Key Slot Dump + Queue Registers** — Reads all 128 hardware key slots AND queue config registers (shows which slots are CPU-readable)
+2. **Full EncryptService Handler Dump** — Dumps 16KB each of `d_ioctl`, `d_open`, and `d_close` handlers plus the full `cdevsw` struct
+3. **Instrumented PUP Decrypt** — Pre/post LSB snapshots around a decrypt call
+4. **Kernel Memory Scan** — Searches near crypto-related strings
+5. **Targeted Address Read** — Re-run mode: reads a specific kernel or physical address after RE reveals the key location
 
 ```bash
+# Full scan — run all approaches
+./ps5_key_extract
+
+# Targeted read — after disassembling the handler dump
+./ps5_key_extract -a 0xFFFFFFFF82345678
+./ps5_key_extract -a 0xFFFFFFFF82345678 -s 256
+
+# Analyze on PC
 python analyze_dump.py pup_key_dump.bin --pup14 PS5UPDATE14.00.PUP --pup14_1 PS5UPDATE14.10.PUP
 ```
 

@@ -137,19 +137,53 @@ Any one of these gives us the missing piece. Once that key is in the tool, it wo
 
 ## I Already Built the Extraction Payload
 
-To make this as easy as possible for anyone with a jailbroken 13.60 PS5, I wrote a ready-to-compile C payload (`ps5_key_extract.c`) that does all three of the above automatically. It implements four approaches:
+To make this as easy as possible for anyone with a jailbroken 13.60 PS5, I wrote a ready-to-compile C payload (`ps5_key_extract.c` v2) that implements a **chained extraction strategy**. The key insight: Byepervisor Reborn gives kernel + HV R/W, but **not** direct PSP memory access. So we can't just dump the security processor — we need to be smarter.
 
-1. **CCP LSB Key Slot Dump** — Maps the AMD CCP v5 MMIO region via `/dev/dmem0`, reads all 128 hardware key slots (8 LSBs x 16 slots x 32 bytes each). If the PUP key is in any slot, this grabs it.
+### The Chained Strategy: Approach 2 → Approach 1
 
-2. **EncryptService ioctl Handler Scan** — Searches kernel memory for the `pup_update0` device driver's `cdevsw` structure, follows the `d_ioctl` function pointer, and dumps 4KB of the handler code. Disassemble on PC with Ghidra/IDA to find which CCP key slot the decrypt function references.
+**Step 1 — Dump the handler code (approach 2, needs only kernel R/W):**
+The payload finds the `pup_update0` device driver's `cdevsw` struct in kernel memory and dumps 16KB each of:
+- `d_ioctl` handler — the function behind `DecryptPupHeader` (ioctl `0xC0184402`)
+- `d_open` handler — key loading may happen when the device is opened
+- `d_close` handler — cleanup code that may reference the key
 
-3. **Instrumented PUP Decrypt** — Snapshots all CCP LSB slots before and after a `DecryptPupHeader` ioctl call. Any slot that changes during the call = the key that was loaded for decryption.
+Transfer the dump to PC, load the handler bytes into Ghidra/IDA as x86-64 code. The disassembly shows exactly how the key gets loaded: which CCP slot, which kernel address, or which PSP mailbox command provides it.
 
-4. **Kernel Memory Scan** — Searches near strings like `encsrv`, `decrypt_header`, `Titania`, `ccp_key` and dumps surrounding context.
+**Step 2 — Target what you found:**
+Based on what the handler reveals:
 
-All operations are **read-only** — nothing is written to kernel or CCP state. Output goes to `/data/pup_key_dump.bin`, which you transfer to PC and run through the companion `analyze_dump.py` script. That script automatically tests every captured key candidate against encrypted PUP headers from FW 14.00 and 14.10.
+| Handler shows | Next step |
+|---|---|
+| Key loaded from a kernel memory address | Re-run payload with `-a 0xADDRESS` to read it directly |
+| Key loaded via CCP unwrap operation | Read the wrapped blob + wrapping key |
+| Key pre-loaded in CCP slot at boot | Check approach 1 results for that slot |
+| Key fetched from PSP via mailbox | Now you know the exact PSP address to target |
+
+### All Five Approaches
+
+1. **CCP LSB Key Slot Dump + Queue Registers** — Maps the AMD CCP v5 MMIO region, reads all 128 hardware key slots AND all queue configuration registers. The queue registers tell us which slots are CPU-readable (public mask) vs hardware-protected (private mask) — so we know immediately if direct reads are possible.
+
+2. **Full EncryptService Handler Dump** — Dumps the complete `cdevsw` struct (all function pointers) plus 16KB of `d_ioctl`, `d_open`, and `d_close` handler code. This is the most reliable approach — it only needs kernel R/W, which Byepervisor Reborn provides.
+
+3. **Instrumented PUP Decrypt** — Snapshots all CCP LSB slots before and after a decrypt ioctl. Note: PSP may lock out after boot on newer firmware, making this less reliable.
+
+4. **Kernel Memory Scan** — Searches near strings like `encsrv`, `decrypt_header`, `sceSblSsDecryptPupHeader`, `Titania` and dumps surrounding context.
+
+5. **Targeted Address Read** — Re-run mode for after you've analyzed the handler dump on PC. Pass `-a 0xADDRESS` to read from a specific kernel or physical address. Automatically detects whether the address is virtual (uses `kernel_copyout`) or physical (uses MMIO mapping).
+
+All operations are **read-only** — nothing is written to kernel or CCP state. Output goes to `/data/pup_key_dump.bin`, which you transfer to PC and run through the companion `analyze_dump.py` script. That script automatically parses all section types, displays CCP queue register masks, shows which slots are CPU-readable, and tests every captured key candidate against encrypted PUP headers from FW 14.00 and 14.10.
 
 **Requirements:** A PS5 on FW 13.60 or below with kernel R/W access (Byepervisor Reborn + Relapse + etaHEN or similar). Compile for FreeBSD 11 amd64 and load via payload loader. You'll need to plug in your framework's `kernel_read64` / `kernel_copyout` functions.
+
+**Usage:**
+```bash
+# Full scan — run all approaches
+./ps5_key_extract
+
+# Targeted read — after RE on PC reveals the key address
+./ps5_key_extract -a 0xFFFFFFFF82345678
+./ps5_key_extract -a 0xFFFFFFFF82345678 -s 256
+```
 
 ## Tool Availability
 
@@ -163,7 +197,7 @@ The tool works today for everything except the one missing key:
 - **Ready to accept the Layer 1 key** — the crypto module just needs one more key added and the full pipeline connects
 - **Extraction payload ready** — `ps5_key_extract.c` + `analyze_dump.py` for someone with console access
 
-Source is published: **https://github.com/deepkicks/TitaniaPy** — drop in your PUP files and go. DMs open if you have console access and want to collaborate — this is a one-key problem with a permanent payoff.
+Source is published: **[GitHub repo link]** — drop in your PUP files and go. DMs open if you have console access and want to collaborate — this is a one-key problem with a permanent payoff.
 
 ---
 
