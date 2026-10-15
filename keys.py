@@ -1,0 +1,182 @@
+"""
+PS5 Known Keys from psdevwiki
+For legitimate security research on personally owned hardware.
+"""
+
+# --- ROM Keys (two 256-byte blocks) ---
+ROM_KEY_BLOCK_1 = bytes.fromhex((
+    "EC0561F36B62400E6FA0EC2EDCFD8D17"
+    "33889AE0E03180AB6DAE39D54BE037E6"
+    "7E5324285D0ABD7734747BE4341FB446"
+    "DB17D1E40947B1C5DB0F6B19CED5A0D5"
+    "036CAEA074963831CB81C0F162EE3CD2"
+    "E3A64517BA22A205D1459FDB8E50CF2A"
+    "4234474B4B389C70F08C2F02816B8F27"
+    "6FFA83C47E75802EFD2A03C8DFADA5A5"
+    "A703A1BB130A4AC725B98839631F6910"
+    "5AF4BF2BA4E6D5198105CF26F6CC18C7"
+    "98EB907FEF9B498D5ACEFE3B8AE13148"
+    "00FA9F7128DC79F914FBE12645AA2115"
+    "8861EB7868C8D3295D28BA5D4FFBE648"
+    "42EA57BEE47A74704D7E5B37706440BD"
+    "A5880A90A62CF2BE24C954D3CED225ED"
+    "DD51408C1DFD41492A22E44458AB5957"
+))
+
+ROM_KEY_BLOCK_2 = bytes.fromhex((
+    "C8D8FCAD0C461FB5F6F90AF080287D5C"
+    "B53B0FF9B30D1C1769091705B93BA82E"
+    "7617400761C4CCA06377A6B5D2BE3D77"
+    "1B4C18922AE90FABB2593C6C5768010E"
+    "E1A4A0350BEA15A4D8FCC8C637C078B1"
+    "46B4D765046F8622C4D2C130C83CD6D5"
+    "D2DA74CA61A87C84073FC968579BE3DA"
+    "C7EB34E0E9DF186A4F1A1071EC098F61"
+    "D14B060509F53F3E051A67F28D6AFE69"
+    "FDA68E24BE3D4F4784C2B2D6AAA74934"
+    "AFFB54E11A8AAEB626E7B8E7EE511414"
+    "30D5AF68C2BFA6E277349E5BB464B33A"
+    "CD1812894FC7806065BC3E5EEF16E0D9"
+    "69E0B1908A00826643624BB9717A2BAF"
+    "CFD2AC9AAFF6015BFB8B61D5BB980A6D"
+    "86CCDD28A81D1E8199DC95792C77A6FB"
+))
+
+# --- Key 2-9 Keyseeds ---
+KEY_2_KEYSEEDS_ALT3 = bytes.fromhex("AB0A9CB9B3DC4118388512A2127AAAA8")
+KEY_2_KEYSEEDS = bytes.fromhex("C09355F88AC42B3B494EFF0B1C556BD2")
+KEY_2_KEYSEEDS_ALT = bytes.fromhex("8C6CEABB994DC0AC1272F39DC7924B9A")
+
+KEY_4_KEYSEEDS = bytes.fromhex(
+    "9A1A6BC1A8A1C0F22ED44CC84ABBD647"
+    "696C8A4B08B19389FEB54CD2FDEEA5E6"
+)
+KEY_4_KEYSEEDS_ALT = bytes.fromhex(
+    "ABAB2B75F6EDA2177314DBA2D294252C"
+    "00000000000000000000000000000000"
+)
+KEY_4_KEYSEEDS_ALT2 = bytes.fromhex(
+    "90ECFD2134AE59C8F1BEE41586B40DAB"
+    "BECED785BDBF2500D4769EB27D4D557C"
+)
+
+KEY_5_KEYSEEDS = bytes.fromhex(
+    "085AAF95FFD183F58D034CAA416D7904"
+    "40315956BE8FEF843006250D144C9C46"
+)
+
+KEY_6_KEYSEEDS_ALT2 = bytes.fromhex(
+    "BCB4914433800577E933753CDF9B0530"
+    "D3BDD2C9773E072B094441009DB442D7"
+)
+
+KEY_7_KEYSEEDS = bytes.fromhex(
+    "A2451EFC50D29C36795E7520D3EF766B"
+    "FB369393BC47E7B3FCA9460F139D4D27"
+)
+
+KEY_8_KEYSEEDS = bytes.fromhex("AFC457975ADB0B40F981E87F96789213")
+KEY_9_KEYSEEDS = bytes.fromhex("78E46F39DE022C96D96599BA90739515")
+
+# --- OTP / KDF ---
+OTP_AES_ROOT = bytes.fromhex("63f0cf8914429057988bcc975b8e798b")
+KDF_SALT1 = bytes.fromhex("4BCEDB98FEA3A7016A75661A03B74AF5")
+KDF_ITERS = 1000
+
+# --- Titania Master Keys (per hardware revision) ---
+TITANIA_KEYS = {
+    1: {
+        "iv": bytes.fromhex("540F65FF23B21B58F98AC952EB51D9B3"),
+        "efc_ipl_revs": ["C3000001", "C3000002"],
+        "eap_kbl_ids": [0x6, 0x7, 0x8],
+        "fw_range": "0.700+",
+    },
+    2: {
+        "iv": bytes.fromhex("582E2420ECD919908ECD73D7A5E8CBA3"),
+        "key": bytes.fromhex("22C5473E5DFB432F9FC37E4AC0A63F4C"),
+        "efc_ipl_revs": [
+            "C3000003", "C3000004", "C3000005", "C3000006",
+            "C3000007", "C3000009", "C300000A", "C300000B", "C300000C",
+        ],
+        "eap_kbl_ids": [0xE],
+        "fw_range": "0.750+",
+    },
+    3: {
+        "iv": bytes.fromhex("AD4FC4C25A23B2713DB29E54E9AB0193"),
+        "efc_ipl_revs": [
+            "C300000D", "C300000E", "C300000F", "C3000010",
+            "C3000011", "C3000012", "C3000013", "C3000014",
+        ],
+        "eap_kbl_ids": [0x15],
+        "fw_range": "6.00+",
+    },
+}
+
+# --- Inner Firmware Keys (Layer 3 - known, work on extracted segments) ---
+EMC_IPL_HEADER_KEY = bytes.fromhex("F0332357C8CFAE7E7E26E52BE9E3AED4")
+EMC_IPL_CIPHER_KEY = bytes.fromhex("D5C92E39759A3E5CE954E772B1C2B651")
+
+EAP_KBL_KEY = bytes.fromhex("262555E3CF062B070B5AA2CDDF3A5D0E")
+EAP_KBL_HMAC_KEY = bytes.fromhex("1EE22F6A189E7D99A28B9A96D3C4DBA2")
+EAP_KBL_KERNEL_KEY = bytes.fromhex("CBCC1E53F42C1CB44D965E233CD792A8")
+EAP_KBL_KERNEL_MAC_KEY = bytes.fromhex("683D6E2E496687CB5B831DA12BCB001B")
+
+EAP_KERNEL_SELF_KEY = bytes.fromhex("32D00F27AE38FE4AC88A352313A2BFB4")
+EAP_KERNEL_SELF_IV = bytes.fromhex("08FEA1ACC37A630999745386168812EC")
+
+EAP_KERNEL_CIPHER_KEY = bytes.fromhex("3D0B1CAA949DB83028F5049BF9FDC11D")
+EAP_KERNEL_CIPHER_IV = bytes.fromhex("7AD87F4C865B1CE2F02E5E62D7B7375D")
+
+# PSVR2 Master Key
+PSVR2_MASTER_KEY = bytes.fromhex("BE5C41DBF3D2DD902E4F939394A8A715")
+
+# PUP segment ID → filename mapping
+SEGMENT_NAMES = {
+    0x01: "eula.xml",
+    0x02: "updatemode.self",
+    0x03: "emc_salina_a.bin",
+    0x04: "mbr.bin",
+    0x05: "kernel.bin",
+    0x06: "unk_06.bin",
+    0x07: "unk_07.bin",
+    0x08: "unk_08.bin",
+    0x09: "unk_09.bin",
+    0x0A: "CP.bin",
+    0x0B: "titania.bls",
+    0x0C: "version_name.xml",
+    0x0D: "emc_salina_b.bin",
+    0x0E: "eap_kbl.bin",
+    0x0F: "bd_firm_info.json",
+    0x10: "emc_salina_c.bls",
+    0x11: "floyd_salina_c.bls",
+    0x12: "usb_pdc_salina_c.bls",
+    0x14: "emc_salina_d.bls",
+    0x15: "eap_kbl_2.bin",
+    0x16: "font.zip",
+    0x100: "ariel_sec_ldr_a.bin",
+    0x101: "oberon_sec_ldr_a.bin",
+    0x102: "oberon_sec_ldr_b.bin",
+    0x103: "oberon_sec_ldr_c.bin",
+    0x104: "oberon_sec_ldr_d.bin",
+    0x105: "oberon_sec_ldr_e.bin",
+    0x106: "oberon_sec_ldr_f.bin",
+    0x200: "dev_unk_512.bin",
+    0x201: "dev_wlanbt.bin",
+    0x203: "dev_ssd0.system_b",
+    0x204: "dev_ssd0.system_ex_b",
+    0x207: "dev_ssd0.preinst",
+}
+
+# KMB_AES function call signatures (for reference during derivation research)
+KMB_CALLS = {
+    "KEY_4": "KMB_AES_CBC_MP0(1, KEY_4_KEYSEEDS, IV, 0, 4u, 1, 0x706)",
+    "KEY_4_ALT": "KMB_AES_CBC_MP0(0, v63, KEY_4_KEYSEEDS_ALTERNATE, 3u, 4u, 1, 0x706)",
+    "KEY_4_ALT2": "KMB_AES_CBC_MP0(1, KEY_4_KEYSEEDS_ALTERNATE_2, IV, 2u, 4u, 1, 0x706)",
+    "KEY_5": "KMB_AES_CBC_MP0(1, KEY_5_KEYSEEDS, IV, 0, 5u, 1, 0x807)",
+    "KEY_6_ALT2": "KMB_AES_CBC_MP0(1, KEY_6_KEYSEEDS_ALTERNATE_2, IV, 2u, 6u, 1, 0x520)",
+    "KEY_7": "KMB_AES_CBC_MP0(1, KEY_7_KEYSEEDS, IV, 0, 7u, 1, 0x805)",
+    "KEY_8": "KMB_AES_ECB_MP0(1, KEY_8_KEYSEEDS, 7u, 8u, 1, 0xFCF)",
+    "KEY_9": "KMB_AES_ECB_MP0(1, KEY_9_KEYSEEDS, 7u, 9u, 1, 0xFCF)",
+    "KEY_2": "CRYPT_AES(v64, v64, nullptr, 32, 4, KEY_2_KEYSEEDS, 1, 2, 0)",
+    "KEY_2_ALT3": "CRYPT_AES(0, 0, nullptr, v59, 4, KEY_2_KEYSEEDS_ALT3, 1, 2, 0)",
+}
