@@ -163,7 +163,7 @@ The tool works today for everything except the one missing key:
 - **Ready to accept the Layer 1 key** — the crypto module just needs one more key added and the full pipeline connects
 - **Extraction payload ready** — `ps5_key_extract.c` + `analyze_dump.py` for someone with console access
 
-Happy to publish the source on GitHub if there's interest. DMs open if you have console access and want to collaborate — this is a one-key problem with a permanent payoff.
+Source is published: **[GitHub repo link]** — drop in your PUP files and go. DMs open if you have console access and want to collaborate — this is a one-key problem with a permanent payoff.
 
 ---
 
