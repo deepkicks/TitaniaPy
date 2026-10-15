@@ -147,7 +147,7 @@ The payload finds the `pup_update0` device driver's `cdevsw` struct in kernel me
 - `d_open` handler — key loading may happen when the device is opened
 - `d_close` handler — cleanup code that may reference the key
 
-Transfer the dump to PC, load the handler bytes into Ghidra/IDA as x86-64 code. The disassembly shows exactly how the key gets loaded: which CCP slot, which kernel address, or which PSP mailbox command provides it.
+Transfer the dump to PC and run `analyze_dump.py`. It **automatically disassembles** the handler code using capstone, searches for kernel address references, CCP slot numbers, AES key size constants, and type-dispatch patterns, then outputs a ranked list of key source candidates with the exact `-a` command for a second payload run. No manual Ghidra work needed in most cases.
 
 **Step 2 — Target what you found:**
 Based on what the handler reveals:
@@ -165,13 +165,28 @@ Based on what the handler reveals:
 
 2. **Full EncryptService Handler Dump** — Dumps the complete `cdevsw` struct (all function pointers) plus 16KB of `d_ioctl`, `d_open`, and `d_close` handler code. This is the most reliable approach — it only needs kernel R/W, which Byepervisor Reborn provides.
 
-3. **Instrumented PUP Decrypt** — Snapshots all CCP LSB slots before and after a decrypt ioctl. Note: PSP may lock out after boot on newer firmware, making this less reliable.
+3. **Instrumented PUP Decrypt** — Snapshots all CCP LSB slots before and after invoking the `DecryptHeader` ioctl (`0xC0184402`) with type=1 (system update key). Even if the decrypt fails on a dummy header, the security processor may still load the key into CCP slots — the pre/post diff catches it. Note: PSP may lock out after boot on newer firmware, making this less reliable.
 
 4. **Kernel Memory Scan** — Searches near strings like `encsrv`, `decrypt_header`, `sceSblSsDecryptPupHeader`, `Titania` and dumps surrounding context.
 
 5. **Targeted Address Read** — Re-run mode for after you've analyzed the handler dump on PC. Pass `-a 0xADDRESS` to read from a specific kernel or physical address. Automatically detects whether the address is virtual (uses `kernel_copyout`) or physical (uses MMIO mapping).
 
-All operations are **read-only** — nothing is written to kernel or CCP state. Output goes to `/data/pup_key_dump.bin`, which you transfer to PC and run through the companion `analyze_dump.py` script. That script automatically parses all section types, displays CCP queue register masks, shows which slots are CPU-readable, and tests every captured key candidate against encrypted PUP headers from FW 14.00 and 14.10.
+All operations are **read-only** — nothing is written to kernel or CCP state. Output goes to `/data/pup_key_dump.bin`, which you transfer to PC and run through the companion `analyze_dump.py` script. That script automatically parses all section types, displays CCP queue register masks, shows which slots are CPU-readable, tests every captured key candidate against encrypted PUP headers from FW 14.00 and 14.10, and then **auto-disassembles the handler code** to find where the key comes from.
+
+### Key Discovery: Full Ioctl Map and Type Dispatch
+
+By studying the `ps5-pup-decrypt` on-console tool source, I mapped the complete ioctl interface for `/dev/pup_update0`:
+
+| Ioctl Code | Name | Args |
+|---|---|---|
+| `0xC0104401` | VerifyBlsHeader | buffer, length, unknown |
+| `0xC0184402` | **DecryptHeader** | buffer, length, **type** |
+| `0xC0184403` | VerifyPupAdditionalSign | index, buffer, length |
+| `0xC0184404` | VerifyPupWatermark | index, buffer, length |
+| `0xC0184405` | DecryptSegment | index, buffer, length |
+| `0xC0284406` | DecryptSegmentBlock | entry_idx, block_idx, block_buf, block_len, table_buf, table_len |
+
+The critical insight: `DecryptHeader` takes a **type** parameter (0, 1, or 2) that selects which key to use. `PS5UPDATE1.PUP` (system updates) = type 1, `PS5UPDATE2.PUP` (recovery) = type 0. This means the `d_ioctl` handler has a **dispatch branch** — `cmp type, 1` followed by a branch to the code that loads the system update key. Our automated disassembly specifically tracks this pattern and highlights it in the output.
 
 **Requirements:** A PS5 on FW 13.60 or below with kernel R/W access (Byepervisor Reborn + Relapse + etaHEN or similar). Compile for FreeBSD 11 amd64 and load via payload loader. You'll need to plug in your framework's `kernel_read64` / `kernel_copyout` functions.
 

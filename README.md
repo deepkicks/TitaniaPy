@@ -19,7 +19,7 @@ The tool handles 3 of 4 crypto layers. **Layer 1 (PUP container encryption) is t
 pip install -r requirements.txt
 ```
 
-Requires Python 3.10+ and [pycryptodome](https://pypi.org/project/pycryptodome/).
+Requires Python 3.10+, [pycryptodome](https://pypi.org/project/pycryptodome/), and [capstone](https://pypi.org/project/capstone/) (for automated handler disassembly).
 
 ## Usage
 
@@ -61,27 +61,28 @@ python main.py decompress segment.bin -o decompressed.bin
 ### Key Extraction (for jailbroken PS5)
 | File | Description |
 |------|-------------|
-| `ps5_key_extract.c` | C payload — 4 approaches to extract the missing PUP container key |
-| `analyze_dump.py` | Parses the dump from `ps5_key_extract.c` and tests key candidates |
+| `ps5_key_extract.c` | C payload — 5 approaches to extract the missing PUP container key |
+| `analyze_dump.py` | Parses the dump, tests key candidates, and auto-disassembles handlers to find the key source |
 
 ### Documentation
 | File | Description |
 |------|-------------|
 | `RESEARCH_POST.md` | Full technical write-up of findings |
+| `EXTRACTION_GUIDE.md` | Step-by-step walkthrough for running the extraction |
 
 ## Key Extraction Payload (v2)
 
 If you have a jailbroken PS5 on FW 13.60 or below, `ps5_key_extract.c` implements a **chained extraction strategy**:
 
-**The chain: Approach 2 → Approach 1/5**
+**The chain: Approach 2 → automated RE → Approach 5**
 1. Dump the `pup_update0` ioctl/open/close handler code (only needs kernel R/W)
-2. Disassemble on PC to find where the key comes from
-3. Re-run the payload with `-a <address>` to read that specific location
+2. Run `analyze_dump.py` on PC — it auto-disassembles the handlers and finds the key source
+3. Re-run the payload with the `-a <address>` command it gives you
 
 **All five approaches:**
 1. **CCP LSB Key Slot Dump + Queue Registers** — Reads all 128 hardware key slots AND queue config registers (shows which slots are CPU-readable)
 2. **Full EncryptService Handler Dump** — Dumps 16KB each of `d_ioctl`, `d_open`, and `d_close` handlers plus the full `cdevsw` struct
-3. **Instrumented PUP Decrypt** — Pre/post LSB snapshots around a decrypt call
+3. **Instrumented PUP Decrypt** — Invokes `DecryptHeader` ioctl with type=1 (system update key) between pre/post LSB snapshots to catch key loading
 4. **Kernel Memory Scan** — Searches near crypto-related strings
 5. **Targeted Address Read** — Re-run mode: reads a specific kernel or physical address after RE reveals the key location
 
@@ -89,12 +90,15 @@ If you have a jailbroken PS5 on FW 13.60 or below, `ps5_key_extract.c` implement
 # Full scan — run all approaches
 ./ps5_key_extract
 
-# Targeted read — after disassembling the handler dump
+# Targeted read — using the address from analyze_dump.py's recommendations
 ./ps5_key_extract -a 0xFFFFFFFF82345678
 ./ps5_key_extract -a 0xFFFFFFFF82345678 -s 256
 
-# Analyze on PC
+# Analyze on PC (tests keys + auto-disassembles handlers)
 python analyze_dump.py pup_key_dump.bin --pup14 PS5UPDATE14.00.PUP --pup14_1 PS5UPDATE14.10.PUP
+
+# Save handler .bin files for manual Ghidra/IDA analysis
+python analyze_dump.py pup_key_dump.bin --save-handlers
 ```
 
 **Requirements:** FreeBSD 11 amd64 cross-compiler, kernel R/W via Byepervisor Reborn + Relapse + etaHEN or similar. You'll need to provide your framework's `kernel_read64` / `kernel_copyout` functions.
