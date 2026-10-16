@@ -70,7 +70,14 @@ python main.py decompress segment.bin -o decompressed.bin
 | `RESEARCH_POST.md` | Full technical write-up of findings |
 | `EXTRACTION_GUIDE.md` | Step-by-step walkthrough for running the extraction |
 
-## Key Extraction Payload (v2)
+## Key Extraction Payload (V2)
+
+ * **V4 has replaced V2 (ps5_key_extractV4.c &
+ps5_key_extractV4.elf)**
+ 
+* **!!V4 possesses abilities
+to flash southbridge WITHOUT a backup.!!**
+ 
 
 If you have a jailbroken PS5 on FW 13.60 or below, `ps5_key_extract.c` implements a **chained extraction strategy**:
 
