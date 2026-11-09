@@ -1,119 +1,154 @@
-# PS5 PUP Decrypt Tool
+# PS5 CCP Key Extraction Research
 
-PC-based Python tool for parsing and decrypting PS5 PUP (PlayStation Update Package) files. No console needed.
+Hardware security research targeting AES-128-CBC key extraction from AMD CCP v5 hardware keyslots on the PlayStation 5.
 
-## Status
+**Target:** PS5 CFI-1015A, FW 1.02 | **SoC:** AMD Zen 2 "Oberon" | **Status:** Active research
 
-The tool handles 3 of 4 crypto layers. **Layer 1 (PUP container encryption) is the one missing piece** — see [RESEARCH_POST.md](RESEARCH_POST.md) for the full technical write-up and what's needed.
+## Overview
 
-| Layer | Purpose | Status |
-|-------|---------|--------|
-| 0 | PBKDF2 master key derivation | Solved |
-| 1 | PUP container encryption | **Blocked — key not public** |
-| 2 | PUP segment-level encryption | Blocked (depends on Layer 1) |
-| 3 | Inner firmware encryption | Solved |
+The PS5 uses a dedicated **Crypto Co-Processor (CCP v5)** managed by an ARM-based **Platform Security Processor (PSP/ASP)** to handle all firmware decryption. Keys are held exclusively in CCP hardware keyslots and never exposed to system memory. The kernel interacts with the PSP through an opaque session-based protocol — it passes encrypted blobs and receives decrypted results, never touching key material directly.
 
-## Setup
+This project systematically maps the hardware attack surface and develops extraction vectors through a series of incremental, safety-gated payloads executed on real hardware.
 
-```bash
-pip install -r requirements.txt
+### Key Findings
+
+- **CCP access is gated by an SMN/IOHC-level firewall**, not by NPT page tables — hypervisor-level bypasses alone cannot reach CCP registers
+- **The PSP operates as a session-based crypto oracle** — the kernel submits work through a shared DMA command buffer and receives opaque session handles, never raw keys
+- **AES keys never touch kernel-accessible RAM** — extraction must go *through* the PSP, not around it
+- **A working PUP decrypt oracle** has been established with known plaintext/ciphertext/IV pairs for AES-128-CBC key verification
+- **CVE-2023-20599** (ASP out-of-bounds access on Zen 2) is likely unpatched on FW 1.02 (shipped late 2020, CVE disclosed Aug 2023) — a viable path to PSP compromise
+- **Complete IOHC MISC register map** built across multiple probing phases — SMN firewall configuration documented
+
+## Architecture
+
+```
+┌───────────────────────────────────────────────────┐
+│   x86 Kernel (FreeBSD-based, Byepervisor active)  │
+│                                                    │
+│   ENCSRV ioctls ──► DMA cmd_buf ──► PSP (ARM)     │
+│   (verify/decrypt)   (shared mem)    (firmware)    │
+│                                          │         │
+│   SMN I/O ports ──► IOHC firewall        ▼         │
+│   (0xCF8/0xCFC)     (locked regs)    CCP v5       │
+│                                      (keyslots)   │
+└───────────────────────────────────────────────────┘
 ```
 
-Requires Python 3.10+, [pycryptodome](https://pypi.org/project/pycryptodome/), and [capstone](https://pypi.org/project/capstone/) (for automated handler disassembly).
+The x86 side can read/write kernel memory (with Byepervisor active) and access SMN registers via PCI config-space I/O ports. But the CCP's queue registers are behind an IOHC firewall that blocks direct access. The only sanctioned path to the CCP is through the PSP firmware, which validates and dispatches crypto operations.
 
-## Usage
+## Prerequisites
+
+- PS5 CFI-1015A on FW 1.02
+- [ps5-payload-sdk](https://github.com/john-tornblom/ps5-payload-sdk) cross-compiler toolchain
+- Byepervisor active (kernel r/w + TEXT write capability)
+- Webkit + kernel exploit chain running ([PS5-UMTX-Jailbreak](https://github.com/PS5Dev/PS5-UMTX-Jailbreak))
+- PUP file on PS5 filesystem
+
+## Building
 
 ```bash
-# Show PUP file structure (BLS container + PUP header)
-python main.py info PS5UPDATE.PUP
-
-# Extract inner entries from BLS container
-python main.py extract PS5UPDATE.PUP -o output_dir/
-
-# Decrypt inner firmware blobs with known Layer 3 keys
-python main.py decrypt firmware_blob.bin -k emc_ipl_header
-
-# Bruteforce-test an unknown blob against all known keys
-python main.py bruteforce unknown_blob.bin
-
-# Analyze entropy of a binary blob
-python main.py analyze blob.bin
-
-# Show all known keys and derivation results
-python main.py keys
-
-# Decompress a zlib-compressed segment
-python main.py decompress segment.bin -o decompressed.bin
+export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
+cd ccp_extractor/ccp_probe
+make phase5_29   # builds sbl_phase5_29_cmdbuf_recon.elf
 ```
 
-## Files
+Each phase builds as a standalone `.elf` payload. See the Makefile for all targets.
 
-### Core Tool
-| File | Description |
-|------|-------------|
-| `main.py` | CLI entry point — 7 commands |
-| `keys.py` | All known PS5 keys (ROM, keyseeds, OTP/KDF, Titania, firmware) |
-| `bls.py` | BLS (SLB2) outer container parser |
-| `pup.py` | PUP inner structure parser |
-| `crypto.py` | AES-128-CBC/ECB, PBKDF2, Layer 3 decrypt functions |
-| `firmware.py` | Inner firmware decryptor with entropy analysis |
+## Deployment
 
-### Key Extraction (for jailbroken PS5)
-| File | Description |
-|------|-------------|
-| `ps5_key_extract.c` | C payload — 5 approaches to extract the missing PUP container key |
-| `analyze_dump.py` | Parses the dump, tests key candidates, and auto-disassembles handlers to find the key source |
+```bash
+# Upload payload via FTP
+curl -T sbl_phase5_29_cmdbuf_recon.elf "ftp://<PS5_IP>:2121/data/sbl_phase5_29_cmdbuf_recon.elf"
 
-### Documentation
-| File | Description |
-|------|-------------|
-| `RESEARCH_POST.md` | Full technical write-up of findings |
-| `EXTRACTION_GUIDE.md` | Step-by-step walkthrough for running the extraction |
+# Execute via hbldr
+curl "http://<PS5_IP>:8080/hbldr?path=/data/sbl_phase5_29_cmdbuf_recon.elf&pipe=1&daemon=0"
+```
 
-## Key Extraction Payload (V2)
+Logs are written to `/data/sbl_phase5_XX.log` on the PS5 and can be retrieved via FTP.
 
- * **V4 has replaced V2 (ps5_key_extractV4.c &
-ps5_key_extractV4.elf)**
+## Research Phases
+
+The project is structured as a series of incremental payloads, each building on data from the previous.
+
+| Phase | Focus | Summary |
+|-------|-------|---------|
+| 1–9 | **Foundation** | DMAP r/w confirmed, CCP MMIO located, PSP command path traced, DMA buffer sniffing infrastructure built |
+| 10–13 | **Descriptor analysis** | CCP v5 command descriptor layout fully reverse-engineered (8 dwords, 32 bytes), key slot indexing understood, faulTPM-style attack path evaluated |
+| 14–18 | **Hardware discovery** | Full PCI/SMN enumeration, PSP gateway functions located in kernel, Byepervisor TEXT write confirmed safe, IO port access established |
+| 19–22 | **Mailbox mapping** | PSP mailbox register safe ranges identified, ECAM crash boundaries documented, bus topology mapped |
+| 23–26 | **PSP session protocol** | Session handles captured across multiple boots, DMA command buffer structure mapped, hidden channel (constant vs session fields) classified, cross-boot differential analysis |
+| 27–28 | **IOHC firewall mapping** | Complete IOHC MISC register map built, PSP/SMU MMIO bases found, aperture configuration cluster discovered, SMN firewall confirmed as the CCP access barrier |
+| 29+ | **PSP exploitation** | Full cmd_buf recon across all ENCSRV pipeline stages, CCP descriptor pattern matching, field classification, PSP command enumeration — building toward PSP compromise via CVE-2023-20599 |
+
+## Active Attack Vectors
+
+1. **CCP Descriptor Injection** — Modify the DMA command buffer between kernel memcpy and PSP consumption (TOCTOU on shared memory)
+2. **CVE-2023-20599** — ASP out-of-bounds r/w on unpatched Zen 2, potential path to PSP code execution
+3. **PSP Command Enumeration** — Discover undocumented PSP command types beyond the ENCSRV interface
+4. **IOHC Firewall Analysis** — Mapped registers may reveal reconfiguration paths for SMN access control
+
+## Safety Model
+
+> **Crashes are acceptable** (power cycle recovers). **Permanent brick must be avoided at all cost.**
+
+Every payload follows a strict safety protocol:
+
+- **BRICK-class** operations (writes to PSP/NBIO/SRAM regions) require documented review with FOR/AGAINST arguments before execution
+- **CRASH-class** operations (reads from unprobed SMN ranges, wide scans) are acceptable but minimized
+- All payloads are **read-only by default** — any write operation is explicitly called out and justified
+- Dangerous address ranges are documented and avoided (known-crash SMN blocks, MMIO BAR regions via DMAP, high physical addresses)
+- Logs are fsynced between operation groups so data survives crashes
+
+## Project Structure
+
+```
+ps5-research/
+├── README.md
+├── OD.txt                              # Strategic analysis / attack path evaluation
+├── keys.py                             # Key verification utilities
+├── ccp_extractor/
+│   ├── ccp_probe/
+│   │   ├── Makefile                    # Build system (68+ payload targets)
+│   │   ├── sbl_phase5_XX_*.c           # Research payloads (one per phase)
+│   │   ├── oracle_brute/               # Brute-force key verification tools
+│   │   ├── bindumps/                   # Raw binary captures from PS5
+│   │   ├── results/                    # Captured logs and binary data
+│   │   └── *.py                        # Analysis and parsing scripts
+│   ├── sbl_srv_analysis/               # SBL service reverse engineering
+│   │   ├── *.bin                       # Dumped kernel code sections
+│   │   ├── *.py                        # Disassembly scripts
+│   │   └── sbl_srv_analysis.md         # Analysis notes
+│   └── logs/                           # Archived payload output logs
+├── PS5-UMTX-Jailbreak/                 # Exploit chain (submodule)
+└── ps5-payload-sdk/                    # Build toolchain (submodule)
+```
+
+## References & Resources
+
+- **AMD CCP Driver (Linux):** [drivers/crypto/ccp](https://github.com/torvalds/linux/tree/master/drivers/crypto/ccp) — open-source CCP v5 command submission reference.
  
-* **!!V4 possesses abilities
-to flash southbridge WITHOUT a backup.!!**
- 
+- **AMD PPR (Processor Programming Reference):** Family 17h documentation for SMN, IOHC, NBIO register layouts.
 
-If you have a jailbroken PS5 on FW 13.60 or below, `ps5_key_extract.c` implements a **chained extraction strategy**:
+- **CVE-2023-20599:** [AMD Security Bulletin SA-2023-011](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-7008.html) — "Improper access control in the ASP"
 
-**The chain: Approach 2 → automated RE → Approach 5**
-1. Dump the `pup_update0` ioctl/open/close handler code (only needs kernel R/W)
-2. Run `analyze_dump.py` on PC — it auto-disassembles the handlers and finds the key source
-3. Re-run the payload with the `-a <address>` command it gives you
+- **PS5 Payload SDK:** [john-tornblom/ps5-payload-sdk](https://github.com/john-tornblom/ps5-payload-sdk) — cross-compilation toolchain for PS5 ELF payloads.
 
-**All five approaches:**
-1. **CCP LSB Key Slot Dump + Queue Registers** — Reads all 128 hardware key slots AND queue config registers (shows which slots are CPU-readable)
-2. **Full EncryptService Handler Dump** — Dumps 16KB each of `d_ioctl`, `d_open`, and `d_close` handlers plus the full `cdevsw` struct
-3. **Instrumented PUP Decrypt** — Invokes `DecryptHeader` ioctl with type=1 (system update key) between pre/post LSB snapshots to catch key loading
-4. **Kernel Memory Scan** — Searches near crypto-related strings
-5. **Targeted Address Read** — Re-run mode: reads a specific kernel or physical address after RE reveals the key location
+- **PS5-UMTX-Jailbreak:** [PS5Dev/PS5-UMTX-Jailbreak](https://github.com/PS5Dev/PS5-UMTX-Jailbreak) — webkit + kernel exploit chain.
 
-```bash
-# Full scan — run all approaches
-./ps5_key_extract
+- **Byepervisor:** PS5 hypervisor bypass enabling kernel TEXT writes and full DMAP r/w.
 
-# Targeted read — using the address from analyze_dump.py's recommendations
-./ps5_key_extract -a 0xFFFFFFFF82345678
-./ps5_key_extract -a 0xFFFFFFFF82345678 -s 256
+- **IOActive CCP Research:** Prior work on AMD PSP/CCP security architecture
 
-# Analyze on PC (tests keys + auto-disassembles handlers)
-python analyze_dump.py pup_key_dump.bin --pup14 PS5UPDATE14.00.PUP --pup14_1 PS5UPDATE14.10.PUP
+## Credits
 
-# Save handler .bin files for manual Ghidra/IDA analysis
-python analyze_dump.py pup_key_dump.bin --save-handlers
-```
+**Claude (Anthropic)** — AI-assisted payload development, code generation, and strategic analysis across Phases 5.10+.
 
-**Requirements:** FreeBSD 11 amd64 cross-compiler, kernel R/W via Byepervisor Reborn + Relapse + etaHEN or similar. You'll need to provide your framework's `kernel_read64` / `kernel_copyout` functions.
+**[deepkick-stacks](https://github.com/deepkick-stacks)** — Lead researcher, hardware testing, payload execution, strategic direction. All research conducted on personally-owned hardware.
 
-## Contributing
+## Disclaimer
 
-The tool is one key away from full PUP decryption. If you have console access and can run the extraction payload or dump the EncryptService, open an issue or DM.
+This research is conducted on personally-owned hardware for educational and security research purposes. No online services are contacted or affected. All work targets a single offline console running outdated firmware (1.02). No attempt is made to circumvent current-generation security measures or enable piracy.
 
----
+## License
 
-*All research conducted on personally owned hardware for educational purposes. Referenced keys are publicly documented on psdevwiki.*
+This project is provided for educational and research purposes only. Use at your own risk.
